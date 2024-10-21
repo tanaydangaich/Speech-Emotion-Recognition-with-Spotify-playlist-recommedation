@@ -1,0 +1,79 @@
+import os
+import numpy as np
+import librosa
+import tensorflow as tf
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, LSTM, Dense, Dropout, TimeDistributed, BatchNormalization
+from sklearn.metrics import classification_report, confusion_matrix
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+# Step 1: Load the RAVDESS dataset
+def load_data(data_dir):
+    X, y = [], []
+    for emotion in os.listdir(data_dir):
+        emotion_dir = os.path.join(data_dir, emotion)
+        for file in os.listdir(emotion_dir):
+            if file.endswith('.wav'):
+                file_path = os.path.join(emotion_dir, file)
+                audio, sr = librosa.load(file_path, sr=16000)  # Load audio file
+                mfccs = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=13)  # Extract MFCCs
+                X.append(mfccs)
+                y.append(emotion)  # Append the emotion label
+    return np.array(X), np.array(y)
+
+# Step 2: Preprocess the data
+def preprocess_data(X, y):
+    # Pad sequences to ensure uniform length
+    X = tf.keras.preprocessing.sequence.pad_sequences(X, padding='post', dtype='float32')
+    X = X[..., np.newaxis]  # Add channel dimension for CNN input
+    le = LabelEncoder()  # Encode string labels into integers
+    y = le.fit_transform(y)
+    return X, y, le
+
+# Step 3: Create the model
+def create_model(input_shape, num_classes):
+    model = Sequential()
+    model.add(TimeDistributed(Conv2D(32, (3, 3), activation='relu'), input_shape=input_shape))
+    model.add(TimeDistributed(MaxPooling2D((2, 2))))
+    model.add(TimeDistributed(BatchNormalization()))  # Normalize layer for stable training
+    model.add(TimeDistributed(Flatten()))
+    model.add(LSTM(64, return_sequences=False))  # LSTM layer for temporal patterns
+    model.add(Dropout(0.5))  # Regularization to prevent overfitting
+    model.add(Dense(num_classes, activation='softmax'))  # Output layer for class probabilities
+    return model
+
+# Step 4: Load and prepare the dataset
+data_dir = 'path_to_ravdess_dataset'  # Specify the path to your dataset
+X, y = load_data(data_dir)  # Load data from the specified directory
+X, y, le = preprocess_data(X, y)  # Preprocess the audio data
+
+# Step 5: Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)  # Split the data
+
+# Step 6: Create and compile the model
+input_shape = (X_train.shape[1], X_train.shape[2], 1)  # Define input shape for CNN
+num_classes = len(le.classes_)  # Number of emotion classes
+model = create_model(input_shape, num_classes)  # Create the model
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])  # Compile the model
+
+# Step 7: Train the model
+model.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.2)  # Train the model
+
+# Step 8: Evaluate the model
+y_pred = model.predict(X_test)  # Predict on the test set
+y_pred_classes = np.argmax(y_pred, axis=1)  # Get the predicted class indices
+
+# Step 9: Classification report and confusion matrix
+print(classification_report(y_test, y_pred_classes, target_names=le.classes_))  # Print classification report
+confusion_mtx = confusion_matrix(y_test, y_pred_classes)  # Compute confusion matrix
+
+# Step 10: Visualize confusion matrix
+plt.figure(figsize=(10, 7))
+sns.heatmap(confusion_mtx, annot=True, fmt='d', cmap='Blues', xticklabels=le.classes_, yticklabels=le.classes_)  # Plot confusion matrix
+plt.ylabel('Actual')
+plt.xlabel('Predicted')
+plt.title('Confusion Matrix')
+plt.show()
